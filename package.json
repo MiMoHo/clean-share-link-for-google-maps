@@ -11,7 +11,8 @@
     "test": "node --test",
     "lint": "web-ext lint --source-dir . --ignore-files 'test' 'test/**' 'scripts' 'scripts/**' 'dist' 'dist/**' 'package.json' 'package-lock.json' '*.md'",
     "build": "web-ext build --source-dir . --artifacts-dir dist --overwrite-dest --ignore-files 'test' 'test/**' 'scripts' 'scripts/**' 'dist' 'dist/**' 'package.json' 'package-lock.json' '*.md'",
-    "check-domains": "node scripts/check-domains.mjs"
+    "check-domains": "node scripts/check-domains.mjs",
+    "build:userscript": "node scripts/build-userscript.mjs"
   },
   "devDependencies": {
     "web-ext": "^8.0.0"

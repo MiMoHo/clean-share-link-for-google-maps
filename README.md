@@ -46,7 +46,7 @@ A Place ID of the form `ChIJ…` is that feature ID packed into a two-field prot
 
 For routes the clean link carries the stop names next to the Place IDs rather than coordinates: Google Maps on the web honours `origin_place_id`, `destination_place_id` and `waypoint_place_ids` only next to a name and otherwise reverse-geocodes the coordinates to the nearest business (observed 18.10.2026; the [documentation](https://developers.google.com/maps/documentation/urls/get-started#directions-action) allows names, addresses or coordinates as values).
 
-Two small scripts run on Google Maps pages: `src/content.js` in the extension’s isolated world relabels the buttons and publishes the clean link as `data-ntmaps-clean` on the `<html>` element; `src/page.js` in the page’s own world ([`world: "MAIN"`](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/content_scripts#world), Firefox 128+, Chrome 111+) wraps `navigator.share()` and `navigator.clipboard.writeText()` and substitutes that link whenever Google hands over a Maps URL. The page script contains no logic of its own.
+Two small scripts run on Google Maps pages: `src/content.js` in the extension’s isolated world relabels the buttons and publishes the clean link as `data-ntmaps-clean` on the `<html>` element; `src/page.js` in the page’s own world ([`world: "MAIN"`](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/content_scripts#world), Firefox 128+, Chrome 111+) wraps `navigator.share()` and `navigator.clipboard.writeText()` and substitutes that link whenever Google hands over a Maps URL. The page script contains no logic of its own. The userscript build (`scripts/build-userscript.mjs`) concatenates the same three files into one script that runs in the page’s world.
 
 ## Install
 
@@ -82,6 +82,25 @@ The release build of Firefox for Android enforces signing as well. Two routes ex
 
 Mozilla also signs add-ons for *self-distribution*: `npx web-ext sign --channel unlisted` with addons.mozilla.org API credentials returns a signed `.xpi` that installs in every Firefox build, including the Android release build through the *Install extension from file* route above, without a public listing ([Self-distribution](https://extensionworkshop.com/documentation/publish/self-distribution/), [Signing and distribution overview](https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/)). The source is still reviewed by Mozilla, which is why this project has not used it so far.
 
+### Userscript (Violentmonkey, Tampermonkey)
+
+The same code is also available as a userscript. The userscript managers are signed and listed on addons.mozilla.org for Firefox and Firefox for Android, so this route works in every Firefox build without changing the signature preference.
+
+1. Install a userscript manager: [Violentmonkey](https://addons.mozilla.org/firefox/addon/violentmonkey/) (open source, MIT) or [Tampermonkey](https://addons.mozilla.org/firefox/addon/tampermonkey/) (proprietary). Both are offered for Firefox for Android as well.
+2. Run `npm run build:userscript`, which writes `dist/clean-share-link-for-google-maps.user.js`.
+3. Open the file over HTTP, for example with `python3 -m http.server 8000 --bind 127.0.0.1 --directory dist` and `http://127.0.0.1:8000/clean-share-link-for-google-maps.user.js`. The manager shows its install page; confirm with **Install**.
+4. Chrome and Brave additionally need the *Allow User Scripts* toggle on the manager’s details page (Chrome 138 and newer) or *Developer mode* (older versions) ([chrome.userScripts](https://developer.chrome.com/docs/extensions/reference/api/userScripts#enable-user-scripts-api)).
+
+Verified on 21.10.2026 with Firefox ESR 153 and the signature check switched on: Violentmonkey 2.49.0 from addons.mozilla.org installed permanently, the userscript installed through Violentmonkey’s install page, and the share dialog, the directions panel and the clipboard wrapper behaved as with the extension. Tampermonkey and Firefox for Android with a userscript manager have not been verified yet; Tampermonkey does not document `@inject-into` and may need adjustments.
+
+Differences to the extension:
+
+- The manager can read every website, not only Google Maps; the extension itself needs no permission beyond its content scripts.
+- Everything runs in the page’s own JavaScript world (`@inject-into page`), because `navigator.share()` and `navigator.clipboard.writeText()` have to be wrapped there. Google Maps’ code can therefore see the script; it keeps its own variables in a private scope.
+- `@run-at document-start` does not guarantee running before the page’s scripts ([Violentmonkey: @run-at](https://violentmonkey.github.io/api/metadata-block/#run-at)). In the tests on 21.10.2026 this did not matter, because Google Maps looked up `navigator.share()` and `navigator.clipboard.writeText()` only when sharing or copying; if Google ever keeps early references to them, the share sheet and clipboard replacement would stop working. The script waits for the `<html>` element if it starts before it exists.
+- Google Maps sent its Content Security Policy as `report-only` on 21.10.2026. If Google enforces it, managers may no longer be able to inject into the page, and the userscript would stop without an error message.
+- If both the extension and the userscript are installed, only the first one to start relabels the buttons. A running copy answers a synchronous `ntmaps-alive` event, and an idle copy asks again every two seconds. In Firefox, a reloaded or disabled extension stops answering and the idle copy takes over (tested on 21.10.2026). Chromium-based browsers were not tested for this case; reloading the page always starts a fresh copy. The page can answer the event too and thereby keep a copy from starting, which gives it no more control than it already has over its own buttons and links.
+
 ### Chrome, Edge, Brave (desktop)
 
 `chrome://extensions` → enable *Developer mode* → **Load unpacked** → select the repository folder, not the zip ([Load unpacked](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked)). Chrome shows a generic icon because it does not support [SVG icons](https://developer.chrome.com/docs/extensions/reference/manifest/icons).
@@ -113,12 +132,15 @@ The extension makes no network requests, stores nothing and collects no data, de
 ## Development
 
 ```
-npm install             # installs web-ext (Node 18+)
-npm test                # unit tests
-npm run lint            # Mozilla addons-linter via web-ext
-npm run build           # zip for sideloading, addons.mozilla.org and the Chrome Web Store
-npm run check-domains   # compare the manifest's domains with Google's list
+npm install               # installs web-ext (Node 18+)
+npm test                  # unit tests
+npm run lint              # Mozilla addons-linter via web-ext
+npm run build             # zip for sideloading, addons.mozilla.org and the Chrome Web Store
+npm run build:userscript  # dist/clean-share-link-for-google-maps.user.js for Violentmonkey and Tampermonkey
+npm run check-domains     # compare the manifest's domains with Google's list
 ```
+
+The userscript’s `@downloadURL` and `@updateURL` point to the file of the same name in the latest GitHub release; managers update from there once a release carries it.
 
 [Match patterns](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Match_patterns#host) allow a wildcard only at the start of the host (`*.google.com`), not in the top-level domain, so the 187 domains from [google.com/supported_domains](https://www.google.com/supported_domains) are listed explicitly; `check-domains` reports drift.
 
