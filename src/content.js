@@ -6,9 +6,13 @@
 (() => {
   'use strict';
 
+  // Hinweis: the extension and the userscript run in different worlds and cannot see
+  // each other's globals. A running instance answers this synchronous event. Firefox
+  // drops the content script of a reloaded or disabled extension, so it stops answering
+  // and an idle copy takes over; an engine that keeps such a copy running keeps it working.
+  const ALIVE = 'ntmaps-alive';
   const core = globalThis.NTMapsCore;
-  if (!core || globalThis.__ntmapsLoaded) return;
-  globalThis.__ntmapsLoaded = true;
+  if (!core) return;
 
   const LABEL = 'Copy Clean Link';
   const LABEL_DONE = 'Copied';
@@ -207,6 +211,8 @@
     // user just saw; preferable to letting Google's handler copy the tracking link.
     const url = (root ? cleanLink(root) : parseCurrent().url) || btn.getAttribute(ACTIVE);
     if (!url) return;
+    // The page.js wrapper swaps Maps links for this attribute; keep it identical to what is copied.
+    document.documentElement.setAttribute(CLEAN, url);
     const label = labelOf(btn);
     btn.setAttribute(BUSY, '');
     const ok = await writeClipboard(url);
@@ -235,14 +241,6 @@
       ev.preventDefault();
     }
   }
-  // Only click and keydown call preventDefault; the other listeners are passive so
-  // they never delay scrolling on the map.
-  for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'keyup']) {
-    window.addEventListener(type, intercept, { capture: true, passive: true });
-  }
-  for (const type of ['click', 'keydown']) {
-    window.addEventListener(type, intercept, { capture: true });
-  }
 
   // Hinweis: Google Maps is a single-page app that reuses the dialog for
   // several places. Re-syncing on DOM and URL changes keeps the link current.
@@ -270,10 +268,49 @@
     }
     return false;
   }
-  new MutationObserver((records) => {
-    if (isHot(records)) { lastHref = location.href; sync(); } else schedule();
-  }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-  window.addEventListener('popstate', schedule);
-  setInterval(() => { if (location.href !== lastHref) schedule(); }, 1000);
-  schedule();
+
+  // Returns true once this copy runs; false while another live copy answers.
+  function start() {
+    if (globalThis.__ntmapsLoaded) return true;
+    if (!document.dispatchEvent(new CustomEvent(ALIVE, { cancelable: true }))) return false;
+    globalThis.__ntmapsLoaded = true;
+    document.addEventListener(ALIVE, (ev) => ev.preventDefault());
+    // A copy that went away during copy() may have left its 2 s busy marker behind.
+    for (const el of document.querySelectorAll('[' + BUSY + ']')) el.removeAttribute(BUSY);
+    const html = document.documentElement;
+    // Only click and keydown call preventDefault; the other listeners are passive so
+    // they never delay scrolling on the map.
+    for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'keyup']) {
+      window.addEventListener(type, intercept, { capture: true, passive: true });
+    }
+    for (const type of ['click', 'keydown']) {
+      window.addEventListener(type, intercept, { capture: true });
+    }
+    new MutationObserver((records) => {
+      if (isHot(records)) { lastHref = location.href; sync(); } else schedule();
+    }).observe(html, { childList: true, subtree: true, characterData: true });
+    window.addEventListener('popstate', schedule);
+    setInterval(() => { if (location.href !== lastHref) schedule(); }, 1000);
+    schedule();
+    return true;
+  }
+
+  // An idle copy checks again, so it takes over when the running one goes away.
+  function begin() {
+    if (start()) return;
+    const retry = setInterval(() => { if (start()) clearInterval(retry); }, 2000);
+  }
+
+  // Hinweis: content scripts at document_start already see <html>; userscript
+  // managers may run before it exists, so wait for it instead of failing.
+  if (document.documentElement) {
+    begin();
+  } else {
+    const waiting = new MutationObserver(() => {
+      if (!document.documentElement) return;
+      waiting.disconnect();
+      begin();
+    });
+    waiting.observe(document, { childList: true });
+  }
 })();
