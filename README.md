@@ -152,6 +152,6 @@ The GitHub Actions workflow in `.github/workflows/ci.yml` runs the tests and `ad
 
 MIT, see `LICENSE`. The link glyph in `icon.svg` is the `link` symbol from Google’s [Material Symbols](https://github.com/google/material-design-icons) (rounded, weight 700), licensed under the [Apache License 2.0](https://github.com/google/material-design-icons/blob/master/LICENSE).
 
-Assisted-By: Claude Opus 5.5 (xhigh)
+Assisted-by: Claude Opus 5.5 (xhigh) for development and the userscript build, Claude Fable 5.1 (xhigh) for review and extension
 
 Google Maps is a trademark of Google LLC. This project is not affiliated with or endorsed by Google.
