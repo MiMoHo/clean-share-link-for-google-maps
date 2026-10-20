@@ -91,7 +91,7 @@ The same code is also available as a userscript. The userscript managers are sig
 3. Open the file over HTTP, for example with `python3 -m http.server 8000 --bind 127.0.0.1 --directory dist` and `http://127.0.0.1:8000/clean-share-link-for-google-maps.user.js`. The manager shows its install page; confirm with **Install**.
 4. Chrome and Brave additionally need the *Allow User Scripts* toggle on the manager’s details page (Chrome 138 and newer) or *Developer mode* (older versions) ([chrome.userScripts](https://developer.chrome.com/docs/extensions/reference/api/userScripts#enable-user-scripts-api)).
 
-Verified on 21.10.2026 with Firefox ESR 153 and the signature check switched on: Violentmonkey 2.49.0 from addons.mozilla.org installed permanently, the userscript installed through Violentmonkey’s install page, and the share dialog, the directions panel and the clipboard wrapper behaved as with the extension. Tampermonkey and Firefox for Android with a userscript manager have not been verified yet; Tampermonkey does not document `@inject-into` and may need adjustments.
+Verified on 21.10.2026 with Firefox ESR 153 and the signature check switched on, separately with Violentmonkey 2.49.0 and Tampermonkey 5.5.0 from addons.mozilla.org: the manager installed permanently, the userscript installed through the manager’s own install page, and the share dialog, the directions panel and the clipboard wrapper behaved as with the extension. Firefox for Android and Chromium-based browsers with a userscript manager have not been verified yet.
 
 Differences to the extension:
 
