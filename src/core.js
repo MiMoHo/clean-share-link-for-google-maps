@@ -242,6 +242,33 @@
     return { mode: null };
   }
 
+  // Travel modes and waypoint limit of the documented directions action (Maps URLs).
+  const API_TRAVEL_MODES = ['driving', 'walking', 'bicycling', 'two-wheeler', 'transit'];
+  const MAX_WAYPOINTS = 9;
+
+  // A route given as a documented Maps URLs link ("/maps/dir/?api=1&origin=…"). A place ID
+  // counts only next to a name, as the documentation requires; an empty origin means
+  // "your location" and stays empty.
+  function dirFromQuery(q, viewport) {
+    const empty = { kind: 'unsupported' };
+    const text = (key) => (q.get(key) || '').trim();
+    const list = (key) => (text(key) ? text(key).split('|').map((s) => s.trim()) : []);
+    const id = (v) => (typeof v === 'string' && PLACE_ID_RE.test(v) ? v : null);
+    const point = (name, placeId) => ({ name: name || null, fid: null, placeId: name ? id(placeId) : null, lat: null, lng: null });
+    const destination = text('destination');
+    const via = list('waypoints');
+    if (!destination || via.length > MAX_WAYPOINTS || via.some((name) => !name)) return empty;
+    const viaIds = list('waypoint_place_ids');
+    const useViaIds = viaIds.length === via.length && viaIds.every((v) => id(v));
+    const waypoints = [
+      point(text('origin'), text('origin_place_id')),
+      ...via.map((name, i) => point(name, useViaIds ? viaIds[i] : null)),
+      point(destination, text('destination_place_id'))
+    ];
+    const travelmode = API_TRAVEL_MODES.includes(text('travelmode')) ? text('travelmode') : null;
+    return { kind: 'dir', waypoints, travelmode, viewport };
+  }
+
   function waypointFromParts(name, data) {
     const fid = data && data.fid;
     return {
@@ -281,6 +308,11 @@
       const names = [];
       for (let i = start; i < raw.length && !isMeta(raw[i]); i++) names.push(decodeName(raw[i]));
       if (names.length && names[names.length - 1] === '' && raw.length === start + names.length) names.pop();
+      // Hinweis: Google keeps an opened "dir/?api=1" link in the address bar until it has
+      // computed the route and only then rewrites it to the path form with data= (several
+      // seconds: 3.8-4.6 s after the button appeared, measured 30.10.2026); the query
+      // already names the route.
+      if (!names.length && !dataSeg && q.get('api') === '1') return dirFromQuery(q, viewport);
       const route = findRoute(tree);
       const data = route ? route.waypoints : [];
       let travelmode = route ? route.travelmode : null;

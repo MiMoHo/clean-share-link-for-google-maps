@@ -1,6 +1,6 @@
 {
   "name": "clean-share-link-for-google-maps",
-  "version": "2026.10.18",
+  "version": "2026.11.1",
   "private": true,
   "description": "Browser extension that replaces Google Maps' tracking short links with clean, documented Maps URLs with Place ID: share dialog, directions panel and the Android share sheet.",
   "license": "MIT",
@@ -9,12 +9,32 @@
   },
   "scripts": {
     "test": "node --test",
-    "lint": "web-ext lint --source-dir . --ignore-files 'test' 'test/**' 'scripts' 'scripts/**' 'dist' 'dist/**' 'package.json' 'package-lock.json' '*.md'",
-    "build": "web-ext build --source-dir . --artifacts-dir dist --overwrite-dest --ignore-files 'test' 'test/**' 'scripts' 'scripts/**' 'dist' 'dist/**' 'package.json' 'package-lock.json' '*.md'",
+    "lint": "web-ext lint",
+    "build": "web-ext build",
     "check-domains": "node scripts/check-domains.mjs",
     "build:userscript": "node scripts/build-userscript.mjs"
   },
   "devDependencies": {
     "web-ext": "^8.0.0"
+  },
+  "webExt": {
+    "sourceDir": ".",
+    "artifactsDir": "dist",
+    "ignoreFiles": [
+      "test",
+      "test/**",
+      "scripts",
+      "scripts/**",
+      "dist",
+      "dist/**",
+      "docs",
+      "docs/**",
+      "package.json",
+      "package-lock.json",
+      "*.md"
+    ],
+    "build": {
+      "overwriteDest": true
+    }
   }
 }

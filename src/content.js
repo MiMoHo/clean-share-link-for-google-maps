@@ -1,7 +1,7 @@
 // Clean Share Link for Google Maps – content script.
 // Turns the "Copy Link" button of the Google Maps share dialog and the
-// "Copy link" button of the directions panel into "Copy Clean Link" and shows
-// the clean URL in the dialog preview.
+// "Copy link" button of the directions panel into "Copy Clean Link". The upper
+// part of the share dialog (image, name, address, short link) is left to Google.
 // No network requests, no storage, no UI of its own: everything is derived from location.href.
 (() => {
   'use strict';
@@ -17,18 +17,24 @@
   const LABEL = 'Copy Clean Link';
   const LABEL_DONE = 'Copied';
   const LABEL_FAILED = 'Copy Failed';
+  const LABEL_NONE = 'No Clean Link';
+  const TITLE_NONE = 'No clean link: the share dialog shows another place than the address bar';
 
   // Hinweis: Google's CSS class names are obfuscated and change often. The
   // data-skw-id attributes and button ids of the share dialog are far more stable.
   const DIALOG = '[data-skw-id="containing-dialog"], [role="dialog"][jslog*="sharekitweb"]';
+  // Hinweis: the preview (image, place name, address and link line) is Google's own way
+  // to copy its short link (a click copies it with navigator.clipboard.write) and is
+  // left alone; only the copy button below it copies the clean link.
+  const PREVIEW = '[data-skw-id="preview"]';
   // Hinweis: the directions panel has no share dialog, only a "Copy link" button
   // that copies a maps.app.goo.gl short link. Its jslog element id is language-independent.
   const DIRECTIONS_COPY = 'button[jslog^="198301;"]';
   const DIRECTIONS_COPY_TEXT = /(cop(y|i)\w*|kopi\w*)\W+(link|lien|enlace)|(link|lien|enlace)\W+(kopi\w*|cop(y|i)\w*)/i;
   const ACTIVE = 'data-ntmaps-url';
   const ORIGINAL = 'data-ntmaps-original';
-  const ORIGINAL_TITLE = 'data-ntmaps-original-title';
   const BUSY = 'data-ntmaps-busy';
+  const NONE = 'data-ntmaps-none';
   // Read by src/page.js in the page's world; the only data shared between the two.
   const CLEAN = 'data-ntmaps-clean';
 
@@ -59,9 +65,19 @@
     return divs.pop() || null;
   }
 
-  // The preview card shows the short-link host ("maps.app.goo.gl").
+  // True for elements in the preview's image container, where Google overlays
+  // "Copy Link" on hover and "Copied" after a click on the card (observed 30.10.2026).
+  function inImage(el, preview) {
+    for (let p = el.parentElement; p && p !== preview; p = p.parentElement) {
+      if (p.querySelector(':scope > img')) return true;
+    }
+    return false;
+  }
+
+  // The preview's link line shows the short-link host ("maps.app.goo.gl"). A build from
+  // before 21.10.2026 that still runs may have rewritten it and marked the original.
   function findPreviewUrl(root) {
-    const preview = root.querySelector('[data-skw-id="preview"]');
+    const preview = root.querySelector(PREVIEW);
     if (!preview) return null;
     const marked = preview.querySelector('[' + ORIGINAL + ']');
     if (marked) return marked;
@@ -71,9 +87,18 @@
     return null;
   }
 
+  // The place name is the first span of the text column that holds the link line.
+  // Google's overlay on the card image is never the name; read as one, it made the
+  // dialog look like one for another place and the button fell back to Google's.
   function dialogTitle(root) {
-    const span = root.querySelector('[data-skw-id="preview"] span');
-    return span ? span.textContent.trim() : null;
+    const preview = root.querySelector(PREVIEW);
+    if (!preview) return null;
+    const spans = [...preview.querySelectorAll('span')];
+    const link = findPreviewUrl(root);
+    const column = link && link.parentElement;
+    const title = (column && spans.find((s) => s.parentElement === column)) ||
+      spans.find((s) => !inImage(s, preview));
+    return title ? title.textContent.trim() : null;
   }
 
   // Parsed once per URL; sync() runs on many DOM mutations.
@@ -91,11 +116,16 @@
     return parsed;
   }
 
-  function cleanLink(root) {
+  // The dialog shows another place than the address bar, so no clean link exists for it.
+  function otherPlace(root) {
     const { info, url } = parseCurrent();
-    if (!url) return null;
+    return !!url && info.kind === 'place' && core.namesMatch(info.name, dialogTitle(root)) === false;
+  }
+
+  function cleanLink(root) {
+    const { url } = parseCurrent();
     // Never present a link for another place than the one shown in the dialog.
-    if (info.kind === 'place' && core.namesMatch(info.name, dialogTitle(root)) === false) return null;
+    if (!url || otherPlace(root)) return null;
     return url;
   }
 
@@ -118,34 +148,80 @@
     }
   }
 
-  function setTitle(el, text) {
-    if (!el.hasAttribute(ORIGINAL_TITLE)) el.setAttribute(ORIGINAL_TITLE, el.getAttribute('title') ?? '');
-    el.setAttribute('title', text);
-  }
-
   function restoreText(el) {
     if (!el || !el.hasAttribute(ORIGINAL)) return;
     const node = textNodeOf(el);
     if (node) node.data = el.getAttribute(ORIGINAL); else el.textContent = el.getAttribute(ORIGINAL);
     el.removeAttribute(ORIGINAL);
-    if (el.hasAttribute(ORIGINAL_TITLE)) {
-      const t = el.getAttribute(ORIGINAL_TITLE);
-      if (t) el.setAttribute('title', t); else el.removeAttribute('title');
-      el.removeAttribute(ORIGINAL_TITLE);
+  }
+
+  // Hinweis: builds from before the ntmaps-alive check (up to 18.10.2026) may still run
+  // next to this copy and set a button the other way. Both copies react to each other's
+  // text changes at once, so re-applying our state would loop and freeze the tab. A
+  // button whose state another copy changed is therefore left to that copy.
+  // Our greying out is lifted, because the other copy may make the button copy again;
+  // older builds ignore attribute changes, so this does not start a loop.
+  const applied = new WeakMap();
+  const contested = new WeakSet();
+  function ours(btn) {
+    if (contested.has(btn)) return false;
+    if (applied.has(btn) && applied.get(btn) !== btn.getAttribute(ACTIVE)) {
+      contested.add(btn);
+      setBlocked(btn, false);
+      return false;
+    }
+    return true;
+  }
+
+  // Greyed out and announced as disabled, so the button is not clicked unread.
+  function setBlocked(btn, on) {
+    if (on) {
+      btn.setAttribute(NONE, '');
+      btn.setAttribute('aria-disabled', 'true');
+      btn.style.opacity = '0.5';
+      btn.style.cursor = 'not-allowed';
+    } else if (btn.hasAttribute(NONE)) {
+      btn.removeAttribute(NONE);
+      btn.removeAttribute('aria-disabled');
+      btn.style.opacity = '';
+      btn.style.cursor = '';
+      if (!btn.getAttribute('style')) btn.removeAttribute('style');
     }
   }
 
+  function textOf(el) {
+    const node = textNodeOf(el);
+    return (node ? node.data : el.textContent).trim();
+  }
+
   function activate(btn, label, url, opts) {
+    applied.set(btn, url);
+    setBlocked(btn, false);
     btn.setAttribute(ACTIVE, url);
     btn.setAttribute('title', url);
-    if (!btn.hasAttribute(BUSY)) setText(label, LABEL);
+    // During the copy feedback "Copied" stays, but never "No Clean Link" on an enabled button.
+    if (!btn.hasAttribute(BUSY) || textOf(label) === LABEL_NONE) setText(label, LABEL);
     // Hinweis: the directions button is a flex item that shrinks until "Copy Clean
     // Link" wraps onto three lines; 9.5em keeps "Copy Clean" on the first line.
     if (opts && opts.minWidth) btn.style.minWidth = opts.minWidth;
   }
 
+  // Hinweis: for another place there is no clean link. The button then says so, is
+  // greyed out and copies nothing, instead of falling back to Google's tracking link.
+  // It keeps the ACTIVE attribute (empty), so its clicks are still intercepted. The label
+  // replaces a running "Copied" at once, so it never suggests that this place was copied.
+  function block(btn, label) {
+    applied.set(btn, '');
+    btn.setAttribute(ACTIVE, '');
+    btn.setAttribute('title', TITLE_NONE);
+    setBlocked(btn, true);
+    setText(label, LABEL_NONE);
+  }
+
   function deactivate(btn, label) {
     if (!btn) return;
+    applied.set(btn, null);
+    setBlocked(btn, false);
     btn.removeAttribute(ACTIVE);
     btn.removeAttribute('title');
     btn.style.minWidth = '';
@@ -162,24 +238,18 @@
     for (const root of document.querySelectorAll(DIALOG)) {
       if (root.parentElement && root.parentElement.closest(DIALOG)) continue;
       const btn = findCopyButton(root);
+      if (btn && !ours(btn)) continue;
       const label = btn && labelOf(btn);
-      const preview = findPreviewUrl(root);
       const url = cleanLink(root);
-
-      if (url && btn && label) {
-        activate(btn, label, url);
-        if (preview) {
-          setText(preview, url.replace(/^https:\/\//, ''));
-          setTitle(preview, url);
-        }
-      } else {
-        deactivate(btn, label);
-        restoreText(preview);
-      }
+      // The upper part of the dialog (image, name, address, link line) stays Google's:
+      // it copies Google's short link, so nothing there is changed.
+      if (url && btn && label) activate(btn, label, url);
+      else if (btn && label && otherPlace(root)) block(btn, label);
+      else deactivate(btn, label);
     }
 
     const dirBtn = findDirectionsCopyButton();
-    if (dirBtn) {
+    if (dirBtn && ours(dirBtn)) {
       const label = labelOf(dirBtn);
       if (current.url && label && current.info.kind === 'dir') activate(dirBtn, label, current.url, { minWidth: '9.5em' });
       else deactivate(dirBtn, label);
@@ -207,6 +277,12 @@
 
   async function copy(btn) {
     const root = btn.closest(DIALOG);
+    // Never fall back to a link from an earlier sync when the dialog shows another place.
+    if (root && otherPlace(root)) {
+      const label = labelOf(btn);
+      if (label && ours(btn)) block(btn, label);
+      return;
+    }
     // Hinweis: the attribute is at most one sync cycle (≤ 1 s) old and is what the
     // user just saw; preferable to letting Google's handler copy the tracking link.
     const url = (root ? cleanLink(root) : parseCurrent().url) || btn.getAttribute(ACTIVE);
@@ -230,7 +306,7 @@
   // link is never copied while the button shows "Copy Clean Link".
   function intercept(ev) {
     const btn = activeButton(ev);
-    if (!btn) return;
+    if (!btn || contested.has(btn)) return;
     const isKey = ev.type === 'keydown' || ev.type === 'keyup';
     if (isKey && ev.key !== 'Enter' && ev.key !== ' ') return;
     ev.stopImmediatePropagation();
@@ -292,6 +368,17 @@
     window.addEventListener('popstate', schedule);
     setInterval(() => { if (location.href !== lastHref) schedule(); }, 1000);
     schedule();
+    // Google Maps rewrites the address with history.replaceState, which fires no DOM event.
+    // The Navigation API reports it where available. It is registered last and guarded,
+    // because in the userscript build the page can replace window.navigation; the poll
+    // above keeps working either way.
+    try {
+      if (typeof navigation === 'object' && navigation && typeof navigation.addEventListener === 'function') {
+        navigation.addEventListener('currententrychange', schedule);
+      }
+    } catch {
+      // keep the poll
+    }
     return true;
   }
 

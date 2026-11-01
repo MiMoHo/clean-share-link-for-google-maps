@@ -234,3 +234,66 @@ test('text searches keep their query instead of degrading to a map view', () => 
   assert.equal(core.parseMapsUrl('https://www.google.com/maps/search/48.8583701,+2.2944813/@48.85,2.29,17z').kind, 'pin');
   assert.equal(core.parseMapsUrl('https://www.google.com/maps/search/?api=1&query=x&query_place_id=ChIJLU7jZClu5kcR4PcOOO6p3I0').kind, 'place');
 });
+
+test('documented dir/?api=1 links are read from their query parameters', () => {
+  const E = 'ChIJLU7jZClu5kcR4PcOOO6p3I0';
+  const L = 'ChIJD3uTd9hx5kcR1IQvGfr8dbk';
+  const clean = (href) => core.buildCleanUrl(core.parseMapsUrl(href));
+  assert.equal(
+    clean(`https://www.google.com/maps/dir/?api=1&origin=Eiffel+Tower&origin_place_id=${E}&destination=Louvre&destination_place_id=${L}&travelmode=walking&hl=de`),
+    `https://www.google.com/maps/dir/?api=1&origin=Eiffel%20Tower&origin_place_id=${E}&destination=Louvre&destination_place_id=${L}&travelmode=walking`);
+  // no origin: "your location"; a place ID without a name is ignored
+  assert.equal(clean(`https://www.google.com/maps/dir/?api=1&origin_place_id=${E}&destination=Louvre`),
+    'https://www.google.com/maps/dir/?api=1&destination=Louvre');
+  // waypoints with matching place IDs, coordinates as values, two-wheeler
+  assert.equal(clean(`https://www.google.de/maps/dir/?api=1&origin=48.8583701,2.2944813&destination=Louvre&waypoints=Notre-Dame%7COp%C3%A9ra&waypoint_place_ids=${E}%7C${L}&travelmode=two-wheeler`),
+    `https://www.google.com/maps/dir/?api=1&origin=48.8583701%2C2.2944813&destination=Louvre&waypoints=Notre-Dame%7COp%C3%A9ra&waypoint_place_ids=${E}%7C${L}&travelmode=two-wheeler`);
+  // waypoint place IDs that do not match the waypoints are dropped as a whole
+  assert.equal(clean(`https://www.google.com/maps/dir/?api=1&origin=A&destination=B&waypoints=X%7CY&waypoint_place_ids=${E}`),
+    'https://www.google.com/maps/dir/?api=1&origin=A&destination=B&waypoints=X%7CY');
+  // unknown travel modes and malformed place IDs are not passed through
+  assert.equal(clean('https://www.google.com/maps/dir/?api=1&origin=A&origin_place_id=x%27%22&destination=B&travelmode=constructor'),
+    'https://www.google.com/maps/dir/?api=1&origin=A&destination=B');
+});
+
+test('dir/?api=1 links without a destination or with too many waypoints stay unsupported', () => {
+  assert.equal(core.parseMapsUrl('https://www.google.com/maps/dir/?api=1').kind, 'unsupported');
+  assert.equal(core.parseMapsUrl('https://www.google.com/maps/dir/?api=1&origin=A').kind, 'unsupported');
+  assert.equal(core.parseMapsUrl('https://www.google.com/maps/dir/?api=1&origin=A&destination=B&waypoints=X%7C%7CY').kind, 'unsupported');
+  const ten = Array.from({ length: 10 }, (_, i) => 'W' + i).join('%7C');
+  assert.equal(core.parseMapsUrl(`https://www.google.com/maps/dir/?api=1&origin=A&destination=B&waypoints=${ten}`).kind, 'unsupported');
+  // without api=1 the query is not read (only Google's path form)
+  assert.equal(core.parseMapsUrl('https://www.google.com/maps/dir/?origin=A&destination=B').kind, 'unsupported');
+});
+
+test('dir/?api=1: the path form and data= keep precedence over the query', () => {
+  const clean = (href) => core.buildCleanUrl(core.parseMapsUrl(href));
+  // names in the path win over origin/destination in the query
+  assert.equal(clean('https://www.google.com/maps/dir/Eiffel+Tower/Louvre/?api=1&origin=X&destination=Y'),
+    'https://www.google.com/maps/dir/?api=1&origin=Eiffel%20Tower&destination=Louvre');
+  // a data= segment is read as before, never replaced by the query
+  assert.equal(core.parseMapsUrl('https://www.google.com/maps/dir/@48.85,2.29,14z/data=!4m2!4m1!3e2?api=1&origin=X&destination=Y').kind, 'unsupported');
+  assert.equal(core.parseMapsUrl('https://www.google.com/maps/dir/data=!4m2!4m1!3e2?api=1&origin=X&destination=Y').kind, 'unsupported');
+});
+
+test('dir/?api=1: waypoint place IDs only when their count matches, up to nine waypoints', () => {
+  const E = 'ChIJLU7jZClu5kcR4PcOOO6p3I0';
+  const L = 'ChIJD3uTd9hx5kcR1IQvGfr8dbk';
+  const clean = (href) => core.buildCleanUrl(core.parseMapsUrl(href));
+  assert.equal(clean(`https://www.google.com/maps/dir/?api=1&origin=A&destination=B&waypoints=X%7CY&waypoint_place_ids=${E}%7C${L}%7C${E}`),
+    'https://www.google.com/maps/dir/?api=1&origin=A&destination=B&waypoints=X%7CY');
+  const nine = Array.from({ length: 9 }, (_, i) => 'W' + i);
+  assert.equal(clean(`https://www.google.com/maps/dir/?api=1&origin=A&destination=B&waypoints=${nine.join('%7C')}`),
+    `https://www.google.com/maps/dir/?api=1&origin=A&destination=B&waypoints=${nine.join('%7C')}`);
+});
+
+test('dir/?api=1: every documented travel mode passes, values are trimmed', () => {
+  for (const mode of ['driving', 'walking', 'bicycling', 'two-wheeler', 'transit']) {
+    assert.equal(core.buildCleanUrl(core.parseMapsUrl(`https://www.google.com/maps/dir/?api=1&origin=A&destination=B&travelmode=${mode}`)),
+      `https://www.google.com/maps/dir/?api=1&origin=A&destination=B&travelmode=${mode}`);
+  }
+  assert.equal(core.buildCleanUrl(core.parseMapsUrl('https://www.google.com/maps/dir/?api=1&origin=%20A%20&origin_place_id=%20ChIJLU7jZClu5kcR4PcOOO6p3I0%20&destination=%20B%20&waypoints=%20X%20%7C%20Y%20&travelmode=%20walking%20')),
+    'https://www.google.com/maps/dir/?api=1&origin=A&origin_place_id=ChIJLU7jZClu5kcR4PcOOO6p3I0&destination=B&waypoints=X%7CY&travelmode=walking');
+  assert.equal(core.buildCleanUrl(core.parseMapsUrl('https://www.google.com/maps/dir/?api=1&origin=A&destination=%20B%20&destination_place_id=%20ChIJD3uTd9hx5kcR1IQvGfr8dbk%20')),
+    'https://www.google.com/maps/dir/?api=1&origin=A&destination=B&destination_place_id=ChIJD3uTd9hx5kcR1IQvGfr8dbk');
+});

@@ -5,14 +5,29 @@ on:
   pull_request:
 
 jobs:
-  test-and-lint:
-    runs-on: ubuntu-latest
+  test-lint-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
+      - name: Keep LF line endings on Windows
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install web-ext
+        run: npm install --no-audit --no-fund
       - name: Unit tests
         run: npm test
-      - name: Mozilla addons-linter (via web-ext, ignores dotfiles and tests)
-        run: npx --yes web-ext@8 lint --source-dir . --ignore-files 'test' 'test/**' 'scripts' 'scripts/**' 'dist' 'dist/**' 'package.json' 'package-lock.json' '*.md'
+      - name: Mozilla addons-linter (via web-ext, settings in package.json)
+        run: npm run lint
+      - name: Build the zip
+        run: npm run build
+      - name: Check that the zip holds only the extension files
+        run: python -c "import glob, zipfile; z = glob.glob('dist/*.zip'); assert len(z) == 1, z; names = sorted(n for n in zipfile.ZipFile(z[0]).namelist() if not n.endswith('/')); print(names); assert names == ['LICENSE', 'icon.svg', 'manifest.json', 'src/content.js', 'src/core.js', 'src/page.js'], names"
